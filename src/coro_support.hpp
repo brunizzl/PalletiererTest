@@ -50,7 +50,7 @@ struct SideEffectCoroutine
 }; //class SideEffectCoroutine
 
 #define WAIT_WHILE(x) while (x) co_yield Void{}
-#define WAIT co_yield Void{}
+#define YIELD co_yield Void{}
 
 //assumes init is an expression returning SideEffectCoroutine.
 //executes one step of that coroutine until it has finished or cond is no longer true.

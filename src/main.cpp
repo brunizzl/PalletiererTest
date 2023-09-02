@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cassert>
 #include <array>
+#include <chrono>
+#include <thread>
 
 #include "coro_support.hpp"
 #include "motors.hpp"
@@ -28,7 +30,7 @@ struct GripperPositionParameters {
     Position box_pickup_pos = Position{ 100, 100, 200 };
     std::int64_t box_height = 30;
     std::int64_t floor_pos = 300;
-    std::int64_t boxes_per_palette = 12;
+    std::int64_t boxes_per_palette = 48;
 };
 
 constinit auto positions = GripperPositionParameters{};
@@ -51,6 +53,19 @@ namespace inlet {
     };
     constinit State state = State::Undefined;
 
+    SideEffectCoroutine run() {
+        assert(state == State::Undefined);
+        while (true) {
+            WAIT_WHILE(!active);
+            state = State::MoveBox;
+            for (auto i = 0; i < 10; i++) {
+                YIELD;
+            }
+            state = State::BoxReady;
+            WAIT_WHILE(state == State::BoxReady);
+        }
+    }
+
 } //namespace inlet
 
 namespace mag {
@@ -72,7 +87,7 @@ namespace mag {
             nr_boxes = 0;
             //TODO: simulate magazine (better then waiting for some time)
             for (auto i = 0; i < 5; i++) {
-                WAIT;
+                YIELD;
             }
         }
     }
@@ -134,7 +149,7 @@ namespace arm {
             if (!active) {
                 co_return;
             }
-            WAIT;
+            YIELD;
         } while (inlet::state != inlet::State::BoxReady || mag::state != mag::State::Ready);
 
         state = State::TakeBox;
@@ -177,7 +192,7 @@ namespace arm {
             while (!error) { //box transport cycle
                 while (!active) {
                     //here manual arm operation management could be called (and allowed)
-                    WAIT;
+                    YIELD;
                 }
                 while (active) {
                     EXEC_WHILE(!error, box_stacking_cycle());
@@ -200,18 +215,35 @@ void debug_print() {
     if (arm::gripper.is_extended()) gripper = "open";
     if (arm::gripper.is_retracted()) gripper = "clse";
 
-    std::println("gripper: {}, x: {:5}, y: {:5}, z: {:5}", 
-        gripper, arm::x_axis.pos(), arm::y_axis.pos(), arm::z_axis.pos());
+    std::print("[{}, x: {:4}, y: {:4}, z: {:4}] nr: {:2}", 
+        gripper, arm::x_axis.pos(), arm::y_axis.pos(), arm::z_axis.pos(), nr_boxes);
 }
 
 
 int main() {
     auto arm_update = arm::run();
     auto mag_update = mag::run();
+    auto inl_update = inlet::run();
     while (true) {
+        const auto start = std::chrono::high_resolution_clock::now();
+
         arm::update_simulated_parts();
         arm_update();
         mag_update();
+        inl_update();
         debug_print();
+
+        const auto end = std::chrono::high_resolution_clock::now();
+        const auto duration = end - start;
+
+        using namespace std::chrono_literals;
+        std::chrono::duration<double, std::milli> const as_millis = duration;
+        if (duration >= 10ms) {
+            std::println(" WARNING: CYCLE TOOK TO LONG: {}", as_millis);
+        }
+        else {
+            std::this_thread::sleep_for(10ms - duration);
+            std::println(" (cycle took {})", as_millis);
+        }
     }
 }
