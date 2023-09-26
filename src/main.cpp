@@ -1,18 +1,65 @@
 
-#include <print>
 #include <algorithm>
 #include <cassert>
 #include <array>
 #include <chrono>
 #include <thread>
+#include <iostream>
 
 #include "coro_support.hpp"
 #include "motors.hpp"
 
-struct Position { std::int64_t x, y, z; };
 
-constinit bool active = false;
-constinit bool error = false;
+enum class Error {
+    InvalidGripperPos,
+    EmergencyStop,
+    BoxCatchedOnConveyor,
+    //To be continued...
+
+    COUNT
+};
+
+class Settings {
+    bool active = false;
+    std::size_t nr_errors = 0;
+    std::array<bool, (std::size_t)Error::COUNT> curr_errors = {};
+
+    static std::size_t to_id(Error err) {
+        std::size_t const err_id = static_cast<std::size_t>(err);
+        assert(err_id < (size_t)(Error::COUNT));
+        return err_id;
+    }
+
+public:
+    bool is_active() const { return this->active; }
+    bool has_error() const { return this->nr_errors; }
+    bool error_is_set(Error const err) const { return this->curr_errors[to_id(err)]; }
+
+    constexpr Settings() {}
+
+    void set_error(Error const err) {
+        auto const err_id = to_id(err);
+        this->active = false;
+        this->nr_errors += 1 - this->curr_errors[err_id]; //only add if this error was previously unreported
+        this->curr_errors[err_id] = true;
+    }
+
+    void reset_error(Error const err) {
+        auto const err_id = to_id(err);
+        this->nr_errors -= this->curr_errors[err_id]; //only subtract if this error was previously reported
+    }
+
+    void set_active() {
+        if (!this->has_error()) {
+            this->active = true;
+        }
+    }
+
+    void reset_active() { this->active = false; }
+};
+constinit Settings settings = {};
+
+struct Position { std::int64_t x, y, z; };
 
 //only correct in x and y axes.
 constexpr auto update_x_y_positions(std::int64_t x1, std::int64_t x2, std::int64_t y1, std::int64_t y2) {
@@ -42,8 +89,7 @@ Position next_stack_box_pos() {
     return pos;
 }
 
-
-namespace inlet {
+struct Inlet {
     enum class State {
         Undefined,
         NoBox,
@@ -51,12 +97,14 @@ namespace inlet {
         BoxReady,
         COUNT
     };
-    constinit State state = State::Undefined;
+    static constinit State state;
+    static constexpr std::size_t coroutines_stack_size = 512;
+    static constexpr auto name = "Inlet";
 
-    SideEffectCoroutine run() {
+    static SideEffectCoroutine<Inlet> run() {
         assert(state == State::Undefined);
         while (true) {
-            WAIT_WHILE(!active);
+            WAIT_WHILE(!settings.is_active());
             state = State::MoveBox;
             for (auto i = 0; i < 10; i++) {
                 YIELD;
@@ -65,10 +113,10 @@ namespace inlet {
             WAIT_WHILE(state == State::BoxReady);
         }
     }
+}; //struct Inlet
+constinit Inlet::State Inlet::state = Inlet::State::Undefined;
 
-} //namespace inlet
-
-namespace mag {
+struct Mag {
     enum class State {
         Undefined,
         Ready,
@@ -76,9 +124,11 @@ namespace mag {
         Empty,
         COUNT
     };
-    constinit State state = State::Undefined;
+    static constinit State state;
+    static constexpr std::size_t coroutines_stack_size = 512;
+    static constexpr auto name = "Magazine";
 
-    SideEffectCoroutine run() {
+    static SideEffectCoroutine<Mag> run() {
         assert(state == State::Undefined);
         while (true) {
             state = State::Ready;
@@ -92,10 +142,11 @@ namespace mag {
         }
     }
 
-} //namespace mag
+}; //struct Mag
+constinit Mag::State Mag::state = Mag::State::Undefined;
 
 
-namespace arm {
+struct Arm {
     enum class State {
         Undefined,
         Homeing,
@@ -107,15 +158,17 @@ namespace arm {
         ReleaseBox,
         COUNT
     };
-    constinit State state = State::Undefined;
+    static constinit State state;
+    static constexpr std::size_t coroutines_stack_size = 512;
+    static constexpr auto name = "Arm";
 
     //global variables
-    constinit SimulatedMotor x_axis = {};
-    constinit SimulatedMotor y_axis = {};
-    constinit SimulatedMotor z_axis = {};
-    constinit SimulatedPiston gripper = {};
+    static constinit SimulatedMotor x_axis;
+    static constinit SimulatedMotor y_axis;
+    static constinit SimulatedMotor z_axis;
+    static constinit SimulatedPiston gripper;
 
-    void update_simulated_parts() {
+    static void update_simulated_parts() {
         x_axis.simulate_tick();
         y_axis.simulate_tick();
         z_axis.simulate_tick();
@@ -123,7 +176,7 @@ namespace arm {
     }
 
     //moves first vertical to initial_z, then to x and y, then to z
-    SideEffectCoroutine go_to(std::int64_t const initial_z, Position const pos) {
+    static SideEffectCoroutine<Arm> go_to(std::int64_t const initial_z, Position const pos) {
         z_axis.go_to_pos(initial_z);
         WAIT_WHILE(z_axis.is_moving());
 
@@ -135,7 +188,7 @@ namespace arm {
         WAIT_WHILE(z_axis.is_moving());
     }
 
-    SideEffectCoroutine box_stacking_cycle() {
+    static SideEffectCoroutine<Arm> box_stacking_cycle() {
         assert(
             state != State::Undefined && 
             state != State::Homeing && 
@@ -146,18 +199,18 @@ namespace arm {
 
         state = State::Waiting;
         do {
-            if (!active) {
+            if (!settings.is_active()) {
                 co_return;
             }
             YIELD;
-        } while (inlet::state != inlet::State::BoxReady || mag::state != mag::State::Ready);
+        } while (Inlet::state != Inlet::State::BoxReady || Mag::state != Mag::State::Ready);
 
         state = State::TakeBox;
         assert(gripper.is_extended());
         EXEC(go_to(100, positions.box_pickup_pos));
         gripper.retract();
         WAIT_WHILE(!gripper.is_retracted());
-        inlet::state = inlet::State::NoBox;
+        Inlet::state = Inlet::State::NoBox;
 
         state = State::TransportBox;
         EXEC(go_to(100, next_stack_box_pos()));
@@ -173,7 +226,7 @@ namespace arm {
         state = State::Waiting;
     }
     
-    SideEffectCoroutine homeing() {
+    static SideEffectCoroutine<Arm> homeing() {
         assert(state == State::Homeing);
         //this is obv. not how homeing works in practice
         //TODO: include sensors
@@ -181,21 +234,21 @@ namespace arm {
         state = State::InHomePos;
     }
 
-    SideEffectCoroutine run() {
+    static SideEffectCoroutine<Arm> run() {
         while (true) {
             assert(state == State::Undefined);
 
-            WAIT_WHILE(error);
+            WAIT_WHILE(settings.has_error());
             state = State::Homeing;
-            EXEC_WHILE(!error, homeing());
+            EXEC_WHILE(!settings.has_error(), homeing());
 
-            while (!error) { //box transport cycle
-                while (!active) {
-                    //here manual arm operation management could be called (and allowed)
+            while (!settings.has_error()) { //box transport cycle
+                while (!settings.is_active()) {
+                    //here manual Arm operation management could be called (and allowed)
                     YIELD;
                 }
-                while (active) {
-                    EXEC_WHILE(!error, box_stacking_cycle());
+                while (settings.is_active()) {
+                    EXEC_WHILE(!settings.has_error(), box_stacking_cycle());
                 }
             }
             //if an error eccurs, the program jumps here
@@ -207,27 +260,41 @@ namespace arm {
     } //run
 
 
-} //namespace arm
+}; //struct Arm
+constinit Arm::State Arm::state = Arm::State::Undefined;
+constinit SimulatedMotor Arm::x_axis = {};
+constinit SimulatedMotor Arm::y_axis = {};
+constinit SimulatedMotor Arm::z_axis = {};
+constinit SimulatedPiston Arm::gripper = {};
 
 void debug_print() {
     char const* gripper = "??";
-    if (arm::gripper.is_moving()) gripper = "move";
-    if (arm::gripper.is_extended()) gripper = "open";
-    if (arm::gripper.is_retracted()) gripper = "clse";
+    if (Arm::gripper.is_moving()) gripper = "move";
+    if (Arm::gripper.is_extended()) gripper = "open";
+    if (Arm::gripper.is_retracted()) gripper = "clse";
 
-    std::print("[{}, x: {:4}, y: {:4}, z: {:4}] nr: {:2}", 
-        gripper, arm::x_axis.pos(), arm::y_axis.pos(), arm::z_axis.pos(), nr_boxes);
+    auto motor_state = [](auto motor) {
+        return motor.is_moving() ? "move" : "still";
+    };
+    std::cout << "[gripper: " << gripper
+        << ", x: " << motor_state(Arm::x_axis)
+        << ", y: " << motor_state(Arm::y_axis)
+        << ", z: " << motor_state(Arm::z_axis)
+        << "] ";
+    std::cout << "box nr: " << nr_boxes;
 }
 
 
 int main() {
-    auto arm_update = arm::run();
-    auto mag_update = mag::run();
-    auto inl_update = inlet::run();
+    settings.set_active();
+
+    auto arm_update = Arm::run();
+    auto mag_update = Mag::run();
+    auto inl_update = Inlet::run();
     while (true) {
         const auto start = std::chrono::high_resolution_clock::now();
 
-        arm::update_simulated_parts();
+        Arm::update_simulated_parts();
         arm_update();
         mag_update();
         inl_update();
@@ -239,11 +306,11 @@ int main() {
         using namespace std::chrono_literals;
         std::chrono::duration<double, std::milli> const as_millis = duration;
         if (duration >= 10ms) {
-            std::println(" WARNING: CYCLE TOOK TO LONG: {}", as_millis);
+            std::cout << " WARNING: CYCLE TOOK TO LONG: " << as_millis << "\n";
         }
         else {
             std::this_thread::sleep_for(10ms - duration);
-            std::println(" (cycle took {})", as_millis);
+            std::cout << "(cycle took " << as_millis << ")\n";
         }
     }
 }

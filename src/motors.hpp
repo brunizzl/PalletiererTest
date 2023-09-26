@@ -12,7 +12,7 @@ T sign(T x) {
 class SimulatedMotor {
     std::int64_t target_pos = 0;
     std::int64_t curr_pos = 0;
-    std::int64_t speed = 55;
+    std::int64_t speed = 17;
 
 public:
     constexpr SimulatedMotor() {}
