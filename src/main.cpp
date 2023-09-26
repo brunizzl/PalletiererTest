@@ -306,11 +306,11 @@ int main() {
         using namespace std::chrono_literals;
         std::chrono::duration<double, std::milli> const as_millis = duration;
         if (duration >= 10ms) {
-            std::cout << " WARNING: CYCLE TOOK TO LONG: " << as_millis << "\n";
+            std::cout << " WARNING: CYCLE TOOK TO LONG: " << as_millis.count() << "ms\n";
         }
         else {
             std::this_thread::sleep_for(10ms - duration);
-            std::cout << "(cycle took " << as_millis << ")\n";
+            std::cout << "(cycle took " << as_millis.count() << "ms)\n";
         }
     }
 }
