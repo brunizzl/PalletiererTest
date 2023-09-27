@@ -8,6 +8,7 @@
 
 #include "coro_support.hpp"
 #include "motors.hpp"
+#include "timer.hpp"
 
 
 enum class Error {
@@ -267,14 +268,14 @@ constinit SimulatedMotor Arm::y_axis = {};
 constinit SimulatedMotor Arm::z_axis = {};
 constinit SimulatedPiston Arm::gripper = {};
 
-void debug_print() {
+void debug_print(std::chrono::nanoseconds const sleep_time) {
     char const* gripper = "??";
     if (Arm::gripper.is_moving()) gripper = "move";
     if (Arm::gripper.is_extended()) gripper = "open";
     if (Arm::gripper.is_retracted()) gripper = "clse";
 
     auto motor_state = [](auto motor) {
-        return motor.is_moving() ? "move" : "still";
+        return motor.is_moving() ? " move" : "still";
     };
     std::cout << "[gripper: " << gripper
         << ", x: " << motor_state(Arm::x_axis)
@@ -282,6 +283,15 @@ void debug_print() {
         << ", z: " << motor_state(Arm::z_axis)
         << "] ";
     std::cout << "box nr: " << nr_boxes;
+
+    using namespace std::chrono_literals;
+    std::chrono::duration<double, std::milli> const as_millis = sleep_time;
+    if (as_millis > 0ms) {
+        std::cout << " (" << as_millis.count() << "ms left)\n";
+    }
+    else {
+        std::cout << " TOOK " << -as_millis.count() << "ms TOO LONG!\n";
+    }
 }
 
 
@@ -291,26 +301,16 @@ int main() {
     auto arm_update = Arm::run();
     auto mag_update = Mag::run();
     auto inl_update = Inlet::run();
-    while (true) {
-        const auto start = std::chrono::high_resolution_clock::now();
 
+    using namespace std::chrono_literals;
+    auto timer = Tick(10ms);
+    while (true) {
         Arm::update_simulated_parts();
         arm_update();
         mag_update();
         inl_update();
-        debug_print();
 
-        const auto end = std::chrono::high_resolution_clock::now();
-        const auto duration = end - start;
-
-        using namespace std::chrono_literals;
-        std::chrono::duration<double, std::milli> const as_millis = duration;
-        if (duration >= 10ms) {
-            std::cout << " WARNING: CYCLE TOOK TO LONG: " << as_millis.count() << "ms\n";
-        }
-        else {
-            std::this_thread::sleep_for(10ms - duration);
-            std::cout << "(cycle took " << as_millis.count() << "ms)\n";
-        }
+        auto const sleep_time = timer.wait_till_end_of_tick();
+        debug_print(sleep_time);
     }
 }
