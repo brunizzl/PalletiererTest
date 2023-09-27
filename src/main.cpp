@@ -34,6 +34,7 @@ class Settings {
 public:
     bool is_active() const { return this->active; }
     bool has_error() const { return this->nr_errors; }
+    std::size_t curr_error_count() const { return this->nr_errors; }
     bool error_is_set(Error const err) const { return this->curr_errors[to_id(err)]; }
 
     constexpr Settings() {}

@@ -5,17 +5,25 @@
 #include <concepts>
 #include <array>
 
-struct GlobalOwner {};
+struct GlobalOwner {}; //signals usual heap allocation of the coroutine state
 
+//coroutines can call each other. one such call chain behaves exactly like the usual call stack
+// , as long as no coroutine manages multiple coroutines simultaniously itself.
+//for that special case, one can circumvent heap allocation and give each such call chain its own stack.
 template<typename T>
-concept CoroutineOwner = std::is_same_v<T, GlobalOwner> || requires {
+concept CallstackOwner = std::is_same_v<T, GlobalOwner> || requires {
     { T::coroutines_stack_size } -> std::convertible_to<std::size_t>;
     { T::name } -> std::convertible_to<char const*>;
 };
 
-template<CoroutineOwner O>
+//there is only one callstack per type, as coroutines are unable to get an allocator object passed in the constructor.
+// thus everything here is static.
+template<CallstackOwner O>
 class CoroutineStack {
     constinit static std::size_t start_unused;
+    //std::size_t has pointer allignment -> every element of arena has pointer allignment 
+    // and can thus be a valid starting position for requested space 
+    // (as long as no artificial allignment was specified for the type allocated...)
     constinit static std::array<std::size_t, O::coroutines_stack_size> arena;
     static constexpr auto elem_size = sizeof(std::size_t);
 
@@ -44,20 +52,25 @@ public:
     }
 };
 
-template<CoroutineOwner O>
-constinit std::size_t CoroutineStack<O>::start_unused = 0;
-template<CoroutineOwner O>
+template<CallstackOwner O>
+constinit std::size_t CoroutineStack<O>::start_unused = 0; //call stack is initially empty
+
+//kinda doenst matter, how the stack is initialized. there is nothing stored here at the program start.
+template<CallstackOwner O>
 constinit std::array<std::size_t, O::coroutines_stack_size> CoroutineStack<O>::arena = {};
 
 
 
-
+//return type for coroutine type below
+//not returning any information is important, as this allows us call the coroutine exactly when
+//the call operator is used and no call when the bool operator is evaluated is nessecairy.
+//This is important when reasoning about the order of side effects caused by multiple coroutines occuring
 struct Void {};
 
 //taken from https://en.cppreference.com/w/cpp/language/coroutines
 // (originally named Generator)
-//but then adapted and simplified for my usecase
-template<CoroutineOwner O = GlobalOwner>
+//but then adapted and simplified for this usecase
+template<CallstackOwner O = GlobalOwner>
 struct SideEffectCoroutine
 {
     struct promise_type;
@@ -105,6 +118,8 @@ struct SideEffectCoroutine
     }
 }; //class SideEffectCoroutine
 
+//simplify implementation of coroutine type above by hiding the trivial return value
+//these are macros, because the whole point of coroutines is to not behave like funktions.
 #define WAIT_WHILE(x) while (x) co_yield Void{}
 #define YIELD co_yield Void{}
 
@@ -112,9 +127,9 @@ struct SideEffectCoroutine
 //executes one step of that coroutine until it has finished or cond is no longer true.
 //(thus assumes usage inside a coroutine itself)
 #define EXEC_WHILE(cond, init) {\
-    SideEffectCoroutine f = init;\
-    while ((cond) && f) {\
-        f();\
+    SideEffectCoroutine coro_f = init;\
+    while ((cond) && coro_f) {\
+        coro_f();\
         co_yield Void{};\
     }\
 }

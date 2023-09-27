@@ -2,9 +2,11 @@
 
 #include <chrono>
 
+
 class Tick {
-	std::chrono::steady_clock::time_point start; 
-	std::chrono::nanoseconds period;
+	//different standard libraries use different types as result of ...::now()
+	decltype(std::chrono::high_resolution_clock::now()) start;
+	std::chrono::nanoseconds period; //length of one tick
 
 public:
 	Tick(std::chrono::nanoseconds period) :
