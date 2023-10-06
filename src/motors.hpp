@@ -6,7 +6,7 @@
 #include <concepts>
 
 template<typename T>
-T sign(T x) {
+constexpr T sign(T x) {
     if (x < 0) return -1;
     if (x > 0) return 1;
     return 0;
@@ -71,8 +71,8 @@ public:
     SimulatedPiston() {}
 
     bool is_moving() const { return this->ticks_until_change != 0;  }
-    bool is_extended() const { return !this->ticks_until_change && this->curr_extended; }
-    bool is_retracted() const { return !this->ticks_until_change && !this->curr_extended; }
+    bool is_extended() const { return !this->is_moving() && this->curr_extended; }
+    bool is_retracted() const { return !this->is_moving() && !this->curr_extended; }
 
     void extend() {
         if (!this->curr_extended) {

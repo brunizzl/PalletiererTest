@@ -5,6 +5,7 @@
 #include <concepts>
 #include <array>
 
+
 struct GlobalOwner {}; //signals usual heap allocation of the coroutine state
 
 //coroutines can call each other. one such call chain behaves exactly like the usual call stack
@@ -20,11 +21,11 @@ concept CallstackOwner = std::is_same_v<T, GlobalOwner> || requires {
 // thus everything here is static.
 template<CallstackOwner O>
 class CoroutineStack {
-    constinit static std::size_t start_unused;
+    constinit inline static std::size_t start_unused = 0;
     //std::size_t has pointer allignment -> every element of arena has pointer allignment 
     // and can thus be a valid starting position for requested space 
     // (as long as no artificial allignment was specified for the type allocated...)
-    constinit static std::array<std::size_t, O::coroutines_stack_size> arena;
+    constinit inline static std::array<std::size_t, O::coroutines_stack_size> arena = {};
     static constexpr auto elem_size = sizeof(std::size_t);
 
     static void* next_address() {
@@ -52,14 +53,6 @@ public:
     }
 };
 
-template<CallstackOwner O>
-constinit std::size_t CoroutineStack<O>::start_unused = 0; //call stack is initially empty
-
-//kinda doenst matter, how the stack is initialized. there is nothing stored here at the program start.
-template<CallstackOwner O>
-constinit std::array<std::size_t, O::coroutines_stack_size> CoroutineStack<O>::arena = {};
-
-
 
 //return type for coroutine type below
 //not returning any information is important, as this allows us call the coroutine exactly when
@@ -76,17 +69,15 @@ struct SideEffectCoroutine
     struct promise_type;
     using handle_type = std::coroutine_handle<promise_type>;
 
-    struct promise_type // required
+    struct promise_type
     {
-        std::exception_ptr exception;
-
         SideEffectCoroutine get_return_object()
         {
             return SideEffectCoroutine(handle_type::from_promise(*this));
         }
         std::suspend_always initial_suspend() { return {}; }
         std::suspend_always final_suspend() noexcept { return {}; }
-        void unhandled_exception() { this->exception = std::current_exception(); } // saving exception
+        void unhandled_exception() {} // exceptions are not expected here
 
         std::suspend_always yield_value(Void) { return {}; }
         void return_void() { }
@@ -107,19 +98,11 @@ struct SideEffectCoroutine
     ~SideEffectCoroutine() { this->handle.destroy(); }
 
     explicit operator bool() { return !this->handle.done(); }
-
-    void operator()()
-    {
-        this->handle();
-        if (this->handle.promise().exception) {
-            // propagate coroutine exception in called context
-            std::rethrow_exception(handle.promise().exception);
-        }
-    }
+    void operator()() { this->handle(); }
 }; //class SideEffectCoroutine
 
 //simplify implementation of coroutine type above by hiding the trivial return value
-//these are macros, because the whole point of coroutines is to not behave like funktions.
+//these are macros, because the whole point of coroutines is to not behave like functions.
 #define WAIT_WHILE(x) while (x) co_yield Void{}
 #define YIELD co_yield Void{}
 
