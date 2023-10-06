@@ -129,6 +129,7 @@
   <ItemGroup>
     <ClInclude Include="src\coro_support.hpp" />
     <ClInclude Include="src\motors.hpp" />
+    <ClInclude Include="src\settings.hpp" />
     <ClInclude Include="src\timer.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

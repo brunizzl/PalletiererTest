@@ -29,5 +29,8 @@
     <ClInclude Include="src\timer.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\settings.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

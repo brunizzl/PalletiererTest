@@ -9,6 +9,7 @@
 #include "coro_support.hpp"
 #include "motors.hpp"
 #include "timer.hpp"
+#include "settings.hpp"
 
 
 enum class Error {
@@ -20,46 +21,7 @@ enum class Error {
     COUNT
 };
 
-class Settings {
-    bool active = false;
-    std::size_t nr_errors = 0;
-    std::array<bool, (std::size_t)Error::COUNT> curr_errors = {};
-
-    static std::size_t to_id(Error err) {
-        std::size_t const err_id = static_cast<std::size_t>(err);
-        assert(err_id < (size_t)(Error::COUNT));
-        return err_id;
-    }
-
-public:
-    bool is_active() const { return this->active; }
-    bool has_error() const { return this->nr_errors; }
-    std::size_t curr_error_count() const { return this->nr_errors; }
-    bool error_is_set(Error const err) const { return this->curr_errors[to_id(err)]; }
-
-    constexpr Settings() {}
-
-    void set_error(Error const err) {
-        auto const err_id = to_id(err);
-        this->active = false;
-        this->nr_errors += 1 - this->curr_errors[err_id]; //only add if this error was previously unreported
-        this->curr_errors[err_id] = true;
-    }
-
-    void reset_error(Error const err) {
-        auto const err_id = to_id(err);
-        this->nr_errors -= this->curr_errors[err_id]; //only subtract if this error was previously reported
-    }
-
-    void set_active() {
-        if (!this->has_error()) {
-            this->active = true;
-        }
-    }
-
-    void reset_active() { this->active = false; }
-};
-constinit Settings settings = {};
+constinit Settings<Error> settings = {};
 
 struct Position { std::int64_t x, y, z; };
 
@@ -99,7 +61,7 @@ struct Inlet {
         BoxReady,
         COUNT
     };
-    static constinit State state;
+    static inline constinit State state = State::Undefined;
     static constexpr std::size_t coroutines_stack_size = 512;
     static constexpr auto name = "Inlet";
 
@@ -116,7 +78,6 @@ struct Inlet {
         }
     }
 }; //struct Inlet
-constinit Inlet::State Inlet::state = Inlet::State::Undefined;
 
 struct Mag {
     enum class State {
@@ -126,7 +87,7 @@ struct Mag {
         Empty,
         COUNT
     };
-    static constinit State state;
+    static inline constinit State state = State::Undefined;
     static constexpr std::size_t coroutines_stack_size = 512;
     static constexpr auto name = "Magazine";
 
@@ -145,7 +106,6 @@ struct Mag {
     }
 
 }; //struct Mag
-constinit Mag::State Mag::state = Mag::State::Undefined;
 
 
 struct Arm {
@@ -160,22 +120,15 @@ struct Arm {
         ReleaseBox,
         COUNT
     };
-    static constinit State state;
+    static inline constinit State state = State::Undefined;
     static constexpr std::size_t coroutines_stack_size = 512;
     static constexpr auto name = "Arm";
 
     //global variables
-    static constinit SimulatedMotor x_axis;
-    static constinit SimulatedMotor y_axis;
-    static constinit SimulatedMotor z_axis;
-    static constinit SimulatedPiston gripper;
-
-    static void update_simulated_parts() {
-        x_axis.simulate_tick();
-        y_axis.simulate_tick();
-        z_axis.simulate_tick();
-        gripper.simulate_tick();
-    }
+    static inline SimulatedMotor x_axis = {};
+    static inline SimulatedMotor y_axis = {};
+    static inline SimulatedMotor z_axis = {};
+    static inline SimulatedPiston gripper = {};
 
     //moves first vertical to initial_z, then to x and y, then to z
     static SideEffectCoroutine<Arm> go_to(std::int64_t const initial_z, Position const pos) {
@@ -260,14 +213,7 @@ struct Arm {
             state = State::Undefined;
         }
     } //run
-
-
 }; //struct Arm
-constinit Arm::State Arm::state = Arm::State::Undefined;
-constinit SimulatedMotor Arm::x_axis = {};
-constinit SimulatedMotor Arm::y_axis = {};
-constinit SimulatedMotor Arm::z_axis = {};
-constinit SimulatedPiston Arm::gripper = {};
 
 void debug_print(std::chrono::nanoseconds const sleep_time) {
     char const* gripper = "??";
@@ -275,7 +221,7 @@ void debug_print(std::chrono::nanoseconds const sleep_time) {
     if (Arm::gripper.is_extended()) gripper = "open";
     if (Arm::gripper.is_retracted()) gripper = "clse";
 
-    auto motor_state = [](auto motor) {
+    auto motor_state = [](auto const& motor) {
         return motor.is_moving() ? " move" : "still";
     };
     std::cout << "[gripper: " << gripper
@@ -306,10 +252,10 @@ int main() {
     using namespace std::chrono_literals;
     auto timer = Tick(10ms);
     while (true) {
-        Arm::update_simulated_parts();
         arm_update();
         mag_update();
-        inl_update();
+        inl_update(); 
+        simulate_all_parts();
 
         auto const sleep_time = timer.wait_till_end_of_tick();
         debug_print(sleep_time);

@@ -1,6 +1,9 @@
 
 #include <cstdint>
 #include <algorithm>
+#include <vector>
+#include <algorithm>
+#include <concepts>
 
 template<typename T>
 T sign(T x) {
@@ -9,13 +12,37 @@ T sign(T x) {
     return 0;
 }
 
-class SimulatedMotor {
+template<typename Derived>
+class SimulatedThing {
+    friend Derived; //allows call of private constructor / destructor
+    static inline std::vector<Derived*> instances = {};
+
+    SimulatedThing() {
+        static_assert(std::derived_from<Derived, SimulatedThing<Derived>>); //see crtp
+        instances.push_back((Derived*)this);
+    }
+
+    ~SimulatedThing() {
+        //expensive operation, not intended to be done until program is finished anyway
+        auto pos = std::find(instances.begin(), instances.end(), (Derived*)this);
+        instances.erase(pos);
+    }
+
+public:
+    static void simulate_tick_for_all_instances() {
+        for (Derived* const inst : instances) {
+            inst->simulate_tick();
+        }
+    }
+}; //class SimulatedThing
+
+class SimulatedMotor: public SimulatedThing<SimulatedMotor> {
     std::int64_t target_pos = 0;
     std::int64_t curr_pos = 0;
     std::int64_t speed = 17;
 
 public:
-    constexpr SimulatedMotor() {}
+    SimulatedMotor() {}
 
     bool is_moving() const { return this->curr_pos != this->target_pos; }
     std::int64_t pos() const { return this->curr_pos; }
@@ -36,12 +63,12 @@ public:
 }; //struct SimulatedMotor
 
 
-class SimulatedPiston {
+class SimulatedPiston: public SimulatedThing<SimulatedPiston> {
     bool curr_extended = true;
     int ticks_until_change = 0;
 
 public:
-    constexpr SimulatedPiston() {}
+    SimulatedPiston() {}
 
     bool is_moving() const { return this->ticks_until_change != 0;  }
     bool is_extended() const { return !this->ticks_until_change && this->curr_extended; }
@@ -67,6 +94,11 @@ public:
             }
         }
     }
-
 }; //struct SimulatedPiston
+
+
+void simulate_all_parts() {
+    SimulatedThing<SimulatedMotor>::simulate_tick_for_all_instances();
+    SimulatedThing<SimulatedPiston>::simulate_tick_for_all_instances();
+}
 
